@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import FormData from "form-data";
 import { ZAMZAR_API_KEY, ZAMZAR_BASE_URL } from "../config/zamzar.js";
+import logger from "../config/logger.js";
 
 export const convertFile = async (req, res) => {
   let filePath;
@@ -11,6 +12,7 @@ export const convertFile = async (req, res) => {
       return res.status(400).json({ error: "No se recibió ningún archivo" });
     }
     filePath = req.file.path;
+    logger.info(`Solicitud de conversión recibida: ${req.file?.originalname}`);
 
     if (!ZAMZAR_API_KEY) {
       return res
@@ -50,6 +52,7 @@ export const convertFile = async (req, res) => {
       message: "Conversión iniciada exitosamente",
     });
   } catch (error) {
+    logger.error(`Error en conversión: ${error.message}`);
     if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
     res.status(500).json({
       error: "Conversion failed",
@@ -64,6 +67,7 @@ export const getJobStatus = async (req, res) => {
     const response = await axios.get(`${ZAMZAR_BASE_URL}/jobs/${jobId}`, {
       auth: { username: ZAMZAR_API_KEY, password: "" },
     });
+    logger.info(`Servidor buscando el jobId: ${jobId}`);
     res.json({
       success: true,
       status: response.data.status,
