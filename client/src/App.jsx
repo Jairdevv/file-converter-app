@@ -1,13 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Upload, FileText, Download, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import axios from 'axios';
 
 export default function FileConverter() {
   const [file, setFile] = useState(null);
   const [targetFormat, setTargetFormat] = useState('pdf');
-  const [status, setStatus] = useState('idle'); // idle, uploading, converting, completed, error
+  const [status, setStatus] = useState('idle'); // idle, uploading, converting, successful, error
   const [downloadUrl, setDownloadUrl] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [progress, setProgress] = useState(0);
+  const [intervalId, setIntervalId] = useState(null);
+
 
   const formats = [
     { value: 'pdf', label: 'PDF' },
@@ -21,6 +24,7 @@ export default function FileConverter() {
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
+    console.log(e.target)
     if (selectedFile) {
       setFile(selectedFile);
       setStatus('idle');
@@ -36,6 +40,7 @@ export default function FileConverter() {
     }
 
     setStatus('uploading');
+    setProgress(10);
     setErrorMessage('');
 
     const formData = new FormData();
@@ -49,24 +54,51 @@ export default function FileConverter() {
         },
       });
 
-      if (!response.ok) {
-        throw new Error('Error en la conversión');
-      }
-
-      const data = await response.json();
-
+      const data = response.data;
+      const jobId = data.jobId;
       setStatus('converting');
+      setProgress(30)
 
-      // Simular polling del estado de conversión
-      // En producción, implementarías un polling real a Zamzar
-      setTimeout(() => {
-        setStatus('completed');
-        setDownloadUrl(data.downloadUrl || '#');
-      }, 3000);
+      // Polling for job status
+      const interval = setInterval(async () => {
+        try {
+          const jobResponse = await axios.get(`http://localhost:3000/api/job/${jobId}`);
+          const jobData = jobResponse.data;
 
+          setProgress((prev) => Math.min(prev + 10, 95));
+
+          console.log('Job status:', jobData);
+
+          if (jobData.status === 'successful') {
+            clearInterval(interval);
+            setIntervalId(null)
+
+            const fileId = jobData.targetFileId;
+            const downloadLink = `http://localhost:3000/api/download/${fileId}`;
+            setDownloadUrl(downloadLink);
+            setStatus('successful');
+            setProgress(100)
+          } else if (jobData.status === 'failed') {
+            clearInterval(interval);
+            setIntervalId(null)
+            setStatus('error');
+            setErrorMessage('La conversión del archivo falló');
+          }
+
+        } catch (jobError) {
+          console.error('Error en el polling:', jobError);
+          clearInterval(interval);
+          setIntervalId(null)
+          setStatus('error');
+          setErrorMessage('Error al obtener el estado del trabajo');
+        }
+      }, 2000);
+
+      setIntervalId(null)
     } catch (error) {
+      console.error("Error en la conversión:", error);
       setStatus('error');
-      setErrorMessage(error.message || 'Error al convertir el archivo');
+      setErrorMessage(error.response?.data?.details || 'Error al convertir el archivo');
     }
   };
 
@@ -82,6 +114,13 @@ export default function FileConverter() {
     setDownloadUrl(null);
     setErrorMessage('');
   };
+
+
+  useEffect(() => {
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [intervalId]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4">
@@ -134,7 +173,7 @@ export default function FileConverter() {
             <select
               value={targetFormat}
               onChange={(e) => setTargetFormat(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
               disabled={status === 'uploading' || status === 'converting'}
             >
               {formats.map((format) => (
@@ -145,10 +184,23 @@ export default function FileConverter() {
             </select>
           </div>
 
+          {/* Spinner animado */}
+          {(status === "uploading" || status === "converting") && (
+            <div className="flex items-center mt-4">
+              {/* Barra de progreso */}
+              <div className="w-full bg-gray-200 rounded-full h-2.5 mt-3">
+                <div
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+                  style={{ width: `${progress}%` }}
+                ></div>
+              </div>
+            </div>
+          )}
+
           {/* Status Messages */}
           {errorMessage && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start">
-              <XCircle className="w-5 h-5 text-red-500 mt-0.5 mr-3 flex-shrink-0" />
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center">
+              <XCircle className="w-5 h-5 text-red-500 mr-3 flex-shrink-0" />
               <p className="text-sm text-red-700">{errorMessage}</p>
             </div>
           )}
@@ -162,7 +214,7 @@ export default function FileConverter() {
             </div>
           )}
 
-          {status === 'completed' && (
+          {status === 'successful' && (
             <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-start">
               <CheckCircle className="w-5 h-5 text-green-500 mt-0.5 mr-3 flex-shrink-0" />
               <p className="text-sm text-green-700">
@@ -173,7 +225,7 @@ export default function FileConverter() {
 
           {/* Action Buttons */}
           <div className="flex gap-3">
-            {status === 'completed' ? (
+            {status === 'successful' ? (
               <>
                 <button
                   onClick={handleDownload}
@@ -197,7 +249,7 @@ export default function FileConverter() {
               >
                 {status === 'uploading' || status === 'converting' ? (
                   <>
-                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    {/* <Loader2 className="w-5 h-5 mr-2 animate-spin" /> */}
                     Procesando...
                   </>
                 ) : (
@@ -210,8 +262,7 @@ export default function FileConverter() {
           {/* Info Footer */}
           <div className="mt-8 pt-6 border-t border-gray-200">
             <p className="text-xs text-gray-500 text-center">
-              Esta aplicación usa la API de Zamzar para convertir archivos.
-              Asegúrate de tener una API key válida configurada en el backend.
+              Hecho con ❤️ usando Zamzar API - Manejo de archivos y conversiones
             </p>
           </div>
         </div>
